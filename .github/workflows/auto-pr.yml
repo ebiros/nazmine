@@ -1,0 +1,55 @@
+name: Auto PR from Issue (OpenAI)
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  build_pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Read issue content
+        id: issue
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const issue = context.payload.issue;
+            core.setOutput("issue_title", issue.title);
+            core.setOutput("issue_body", issue.body);
+
+      - name: Call OpenAI API
+        id: openai
+        run: |
+          echo "🔵 Sending request to OpenAI..."
+          RESPONSE=$(curl https://api.openai.com/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
+            -d "{
+                  \"model\": \"gpt-5\",
+                  \"messages\": [
+                    {\"role\": \"system\", \"content\": \"You modify code based on the instructions and return ONLY complete code files.\"},
+                    {\"role\": \"user\", \"content\": \"${{ steps.issue.outputs.issue_body }}\"}
+                  ]
+                }")
+          
+          echo "$RESPONSE" > response.json
+          echo "🟢 Response saved."
+
+      - name: Extract code from OpenAI response
+        id: extract
+        run: |
+          CONTENT=$(jq -r '.choices[0].message.content' response.json)
+          echo "$CONTENT" > new_code.txt
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "Update based on issue: ${{ steps.issue.outputs.issue_title }}"
+          title: "Auto PR: ${{ steps.issue.outputs.issue_title }}"
+          body: "Generated from Issue via OpenAI"
+          branch: "auto/openai-${{ github.run_id }}"
+          add-paths: "new_code.txt"
